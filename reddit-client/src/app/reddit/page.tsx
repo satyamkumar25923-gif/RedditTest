@@ -2,15 +2,14 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
 import {
   RedditLogo,
   Plus,
   CheckCircle,
   CircleNotch,
-  User,
   PaperPlaneRight,
   ArrowLeft,
-  CaretDown,
 } from "@phosphor-icons/react";
 
 type RedditAccount = {
@@ -99,6 +98,9 @@ export default function RedditWorkspace() {
       </div>
 
       <div className="max-w-4xl mx-auto relative z-10">
+        <Link href="/" className="inline-flex items-center gap-2 text-[var(--text-muted)] hover:text-white transition-colors mb-6 text-sm">
+          <ArrowLeft size={16} /> Back to Home
+        </Link>
         <div className="mb-8 flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#ff4500] to-[#ff8700] flex items-center justify-center shadow-[0_0_30px_rgba(255,69,0,0.3)]">
             <RedditLogo weight="fill" className="text-white text-3xl" />

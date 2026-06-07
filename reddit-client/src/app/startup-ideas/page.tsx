@@ -37,7 +37,16 @@ function Badge({ children, color }: { children: React.ReactNode; color: string }
   );
 }
 
-function InputField({ label, type = "text", value, onChange, placeholder, hint }: any) {
+type InputFieldProps = {
+  label: string;
+  type?: string;
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  hint?: string;
+};
+
+function InputField({ label, type = "text", value, onChange, placeholder, hint }: InputFieldProps) {
   const [show, setShow] = useState(false);
   const isPass = type === "password";
   return (
@@ -74,9 +83,13 @@ export default function StartupIdeaFinder() {
   const [postedLinks, setPostedLinks] = useState<string[]>([]);
   const [nextRunIn, setNextRunIn] = useState<number>(0);
   const [runCount, setRunCount] = useState(0);
+  const [analysisMode, setAnalysisMode] = useState<"demo" | "openai" | null>(null);
+  const [dataSource, setDataSource] = useState<"reddit" | "sample" | null>(null);
   const scheduleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const configValid = !!(config.redditClientId && config.redditClientSecret && config.openaiApiKey);
+  const canRun = config.subreddits.length > 0;
+  const hasOpenAI = !!config.openaiApiKey;
+  const canAutoPost = !!(config.redditClientId && config.redditClientSecret && config.redditUsername && config.redditPassword);
 
   useEffect(() => {
     try {
@@ -90,13 +103,18 @@ export default function StartupIdeaFinder() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   };
 
-  const upd = (key: keyof UserConfig, val: any) => saveConfig({ ...config, [key]: val });
+  const upd = (key: keyof UserConfig, val: UserConfig[keyof UserConfig]) => saveConfig({ ...config, [key]: val });
 
   const runAnalysis = useCallback(async () => {
-    if (!configValid) { setError("Please complete setup first."); setView("setup"); return; }
+    if (!canRun) { setError("Add at least one subreddit to scrape."); setView("setup"); return; }
+    if (config.postToReddit && !canAutoPost) {
+      setError("Auto-post requires Reddit Client ID, Secret, Username, and Password.");
+      setView("setup");
+      return;
+    }
     setView("running"); setStage("scraping"); setError(null);
     try {
-      await new Promise(r => setTimeout(r, 900));
+      await new Promise(r => setTimeout(r, 600));
       setStage("analyzing");
       const res = await fetch("/api/startup-ideas", {
         method: "POST",
@@ -116,14 +134,16 @@ export default function StartupIdeaFinder() {
       if (!res.ok) throw new Error(data.error || "Failed to generate ideas.");
       setIdeas(data.ideas || []);
       setPostedLinks(data.postedLinks || []);
+      setAnalysisMode(data.mode === "openai" ? "openai" : "demo");
+      setDataSource(data.dataSource === "reddit" ? "reddit" : "sample");
       setLastRun(new Date().toLocaleTimeString());
       setRunCount(c => c + 1);
       setView("results");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setView("setup");
     }
-  }, [config, configValid]);
+  }, [config, canRun, canAutoPost]);
 
   const startSchedule = () => {
     upd("scheduleEnabled", true);
@@ -182,6 +202,8 @@ export default function StartupIdeaFinder() {
             {config.scheduleEnabled && nextRunIn > 0 && (
               <Badge color="bg-orange-500/10 text-orange-400 border-orange-500/20"><Clock size={12} /> Next in {fmtCountdown(nextRunIn)}</Badge>
             )}
+            {!hasOpenAI && <Badge color="bg-blue-500/10 text-blue-400 border-blue-500/20">Demo mode</Badge>}
+            {analysisMode === "openai" && <Badge color="bg-purple-500/10 text-purple-400 border-purple-500/20">GPT powered</Badge>}
           </div>
         </div>
 
@@ -193,12 +215,13 @@ export default function StartupIdeaFinder() {
               <div className="flex items-center gap-2 mb-4">
                 <Gear className="text-orange-400" size={18} />
                 <h2 className="font-semibold text-sm">API Credentials</h2>
-                {configValid && <CheckCircle className="text-green-400 ml-auto" size={16} />}
+                {hasOpenAI && <CheckCircle className="text-green-400 ml-auto" size={16} />}
               </div>
+              <p className="text-xs text-zinc-500 mb-3">Optional — leave blank to use free demo mode with live Reddit data.</p>
               <div className="space-y-3">
-                <InputField label="Reddit Client ID" value={config.redditClientId} onChange={(v: string) => upd("redditClientId", v)} placeholder="e.g. abc123xyz" hint="From reddit.com/prefs/apps" />
-                <InputField label="Reddit Client Secret" type="password" value={config.redditClientSecret} onChange={(v: string) => upd("redditClientSecret", v)} placeholder="Secret key" />
-                <InputField label="OpenAI API Key" type="password" value={config.openaiApiKey} onChange={(v: string) => upd("openaiApiKey", v)} placeholder="sk-..." hint="From platform.openai.com" />
+                <InputField label="Reddit Client ID" value={config.redditClientId} onChange={(v: string) => upd("redditClientId", v)} placeholder="Optional — for auto-posting" hint="From reddit.com/prefs/apps" />
+                <InputField label="Reddit Client Secret" type="password" value={config.redditClientSecret} onChange={(v: string) => upd("redditClientSecret", v)} placeholder="Optional" />
+                <InputField label="OpenAI API Key" type="password" value={config.openaiApiKey} onChange={(v: string) => upd("openaiApiKey", v)} placeholder="Optional — enables GPT analysis" hint="From platform.openai.com" />
               </div>
             </div>
 
@@ -263,7 +286,7 @@ export default function StartupIdeaFinder() {
               </div>
               <div className="flex gap-2">
                 {!config.scheduleEnabled ? (
-                  <button onClick={startSchedule} disabled={!configValid}
+                  <button onClick={startSchedule} disabled={!canRun}
                     className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl py-2.5 text-sm font-medium transition-all">
                     <Play size={14} weight="fill" /> Start Automation
                   </button>
@@ -273,12 +296,12 @@ export default function StartupIdeaFinder() {
                     <Stop size={14} weight="fill" /> Stop Automation
                   </button>
                 )}
-                <button onClick={runAnalysis} disabled={!configValid || view === "running"}
+                <button onClick={runAnalysis} disabled={!canRun || view === "running"}
                   className="flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed border border-zinc-700 text-white rounded-xl px-4 py-2.5 text-sm font-medium transition-all">
                   <Sparkle size={14} weight="fill" className="text-orange-400" /> Run Once
                 </button>
               </div>
-              {!configValid && <p className="text-xs text-zinc-500 mt-2 text-center">Complete API credentials to enable</p>}
+              <p className="text-xs text-zinc-500 mt-2 text-center">Works instantly in demo mode — no keys required</p>
             </div>
           </div>
 
@@ -311,9 +334,9 @@ export default function StartupIdeaFinder() {
                       </div>
                       <h2 className="text-xl font-semibold mb-3">Ready to Find Ideas</h2>
                       <p className="text-zinc-400 text-sm max-w-sm leading-relaxed mb-2">
-                        Fill in your credentials on the left, then click <strong className="text-white">Run Once</strong> or <strong className="text-white">Start Automation</strong>.
+                        Click <strong className="text-white">Run Once</strong> to scrape live Reddit posts and generate startup ideas instantly.
                       </p>
-                      <p className="text-zinc-600 text-xs">Credentials are saved locally in your browser — never sent anywhere except Reddit & OpenAI.</p>
+                      <p className="text-zinc-600 text-xs">Add OpenAI &amp; Reddit keys for GPT analysis and auto-posting. Config is saved locally.</p>
 
                       {error && (
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -338,7 +361,7 @@ export default function StartupIdeaFinder() {
                         <>
                           <Robot weight="duotone" className="animate-bounce text-orange-400 mb-6" size={48} />
                           <h2 className="text-xl font-semibold mb-2">AI Analyzing Problems...</h2>
-                          <p className="text-zinc-400 text-sm">Using GPT to find patterns and generate startup ideas</p>
+                          <p className="text-zinc-400 text-sm">{hasOpenAI ? "Using GPT to find patterns and generate startup ideas" : "Generating ideas from top Reddit posts"}</p>
                         </>
                       )}
                       <div className="mt-8 flex gap-1.5">
@@ -357,6 +380,11 @@ export default function StartupIdeaFinder() {
                       {error && (
                         <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
                           <XCircle size={14} /> {error}
+                        </div>
+                      )}
+                      {analysisMode === "demo" && (
+                        <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs">
+                          Demo mode — {dataSource === "reddit" ? "ideas from live Reddit posts" : "using curated sample posts (Reddit API unavailable)"}. Add an OpenAI key for GPT analysis.
                         </div>
                       )}
                       {postedLinks.length > 0 && (
@@ -381,7 +409,7 @@ export default function StartupIdeaFinder() {
                             {idea.title && <h3 className="text-base font-semibold text-white mb-3">{idea.title}</h3>}
                             <div className="mb-4">
                               <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">Identified Problem</p>
-                              <p className="text-sm leading-relaxed text-zinc-300 bg-black/20 p-3 rounded-xl border border-white/5">"{idea.problem}"</p>
+                              <p className="text-sm leading-relaxed text-zinc-300 bg-black/20 p-3 rounded-xl border border-white/5">&ldquo;{idea.problem}&rdquo;</p>
                             </div>
                             <div>
                               <p className="text-xs text-orange-400 uppercase tracking-wider font-semibold mb-2 flex items-center gap-1.5"><Sparkle size={11} weight="fill" /> AI Solution</p>
@@ -403,9 +431,9 @@ export default function StartupIdeaFinder() {
           <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">How it works</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { n: "1", t: "Enter Credentials", d: "Add your Reddit App & OpenAI keys. Saved only in your browser." },
-              { n: "2", t: "Pick Subreddits", d: "Choose which communities to monitor for problems & complaints." },
-              { n: "3", t: "AI Analyzes", d: "GPT reads posts, finds patterns, and proposes startup solutions." },
+              { n: "1", t: "Pick Subreddits", d: "Choose communities to monitor — demo mode works with zero setup." },
+              { n: "2", t: "Run Analysis", d: "Scrape hot posts and generate ideas instantly in demo mode." },
+              { n: "3", t: "Add OpenAI (Optional)", d: "GPT reads posts, finds patterns, and proposes startup solutions." },
               { n: "4", t: "Auto-Post (Optional)", d: "Bot posts ideas directly to a subreddit on your schedule." },
             ].map(s => (
               <div key={s.n} className="flex gap-3">
